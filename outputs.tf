@@ -13,10 +13,20 @@ output "cluster_security_group_id" {
 
 output "region" {
   description = "AWS region"
-  value       = var.region
+  value       = var.aws_region
 }
 
-output "cluster_name" {
+output "eks_cluster_name" {
   description = "Kubernetes Cluster Name"
   value       = module.eks.cluster_name
+}
+
+output "mongo_cluster_ip" {
+  description = "Mongo Cluster IP"
+  value       = aws_instance.my_instance.public_ip
+}
+
+output "s3_bucket_name" {
+  description = "Name of S3 Bucket"
+  value       = aws_s3_bucket.my_s3_bucket.bucket
 }

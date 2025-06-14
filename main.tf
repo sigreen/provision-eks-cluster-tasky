@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: MPL-2.0
 
 provider "aws" {
-  region = var.region
+  access_key = var.aws_access_key
+  secret_key = var.aws_secret_key
+  region = var.aws_region
 }
 
 # Filter out local zones, which are not currently supported 
@@ -150,6 +152,14 @@ resource aws_security_group "docdb-security-group"{
         cidr_blocks = ["0.0.0.0/0"]
     }
 }
+
+data "template_file" "cron_script" {
+    template = "${file("scripts/provision_s3_cron.sh")}"
+    vars = {
+        bucket = "${aws_s3_bucket.my_s3_bucket.bucket}"
+    }
+}
+
 resource "aws_key_pair" "ssh_keypair" {
   key_name   = "my-keypair"  # Replace with your desired key pair name
   public_key = file("${path.root}/keys/id_ed25519.pub")  # Replace with the path to your public key file
@@ -175,7 +185,36 @@ resource "aws_instance" "my_instance" {
               sudo sed -i 's/bindIp: 127.0.0.1/bindIp: 0.0.0.0/g' /etc/mongod.conf
               systemctl start mongod
               systemctl enable mongodb
+              snap install aws-cli --classic
               EOF
+
+ # Copy cron script (s3 and mongo)
+  provisioner "file" {
+    content = "${data.template_file.cron_script.rendered}"
+    destination = "/home/ubuntu/provision_s3_cron.sh"
+  }
+  
+  # Copy AWS credentials
+  provisioner "file" {
+    source = "keys/aws"
+    destination = "/home/ubuntu/.aws"
+  }
+
+     # Execute cron jobs
+  provisioner "remote-exec" {
+    inline = [
+      "chmod u+x provision_s3_cron.sh",
+      "./provision_s3_cron.sh"
+    ]
+  }
+  
+  connection {
+    type     = "ssh"
+    host     = self.public_ip
+    user="${var.INSTANCE_USERNAME}"
+    private_key="${file("${var.PATH_TO_PRIVATE_KEY}")}"
+  }
+
  tags = {
     Name = "my-ssh-tunnel-server"
 
@@ -205,4 +244,31 @@ resource "aws_docdb_cluster" "docdb_cluster" {
   db_subnet_group_name = aws_docdb_subnet_group.subnet_group.name
   vpc_security_group_ids = [aws_security_group.docdb-security-group.id]
   # Additional cluster settings can be configured here
+}
+
+## S3 Bucket stuff
+resource "aws_s3_bucket" "my_s3_bucket" {
+  bucket_prefix = "education-s3"
+}
+
+resource "aws_iam_user" "user" {
+  name = "my-user"
+}
+
+resource "aws_s3_bucket_policy" "bucket_policy" {
+  bucket = aws_s3_bucket.my_s3_bucket.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AllowUserAccess"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_user.user.arn
+        }
+        Action = ["s3:*"]
+        Resource = ["arn:aws:s3:::${aws_s3_bucket.my_s3_bucket.bucket}"]
+      }
+    ]
+  })
 }
